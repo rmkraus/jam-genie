@@ -1,7 +1,19 @@
 <script>
+  import 'luna-object-viewer/luna-object-viewer.css'
   import ChordSheetJS from 'chordsheetjs'
-  import { JsonView } from '@zerodevx/svelte-json-view'
+  import LunaObjectViewer from 'luna-object-viewer'
   import { getFirstVerseAndChorusInOrderFromSections, expandToFourLines, convertChordSheetLinesToStrumSlots } from './chordpro-to-strum'
+
+  /** Svelte action: bind luna-object-viewer to a container and update when data changes. */
+  function lunaViewer(node, data) {
+    const viewer = new LunaObjectViewer(node, { accessGetter: false })
+    if (data != null) viewer.set(data)
+    return {
+      update(data) {
+        if (data != null) viewer.set(data)
+      },
+    }
+  }
 
   /** Ordered sections (verse and/or chorus) with their Strum slot results. */
   let sectionsWithSlots = $state(/** @type {Array<{ kind: 'verse'|'chorus'; serialized: unknown[]; slots: import('./chordpro-to-strum').ConvertResult }> */ ([]))
@@ -114,9 +126,7 @@
             <button type="button" class="btn btn-outline-secondary" onclick={clearResult}>Clear</button>
           </div>
         </div>
-        <div class="json-viewer-wrap">
-          <JsonView json={parsedData} depth={2} />
-        </div>
+        <div class="json-viewer-wrap" use:lunaViewer={parsedData}></div>
         {#each sectionsWithSlots as { kind, slots }}
           <div class="mt-3">
             <h6 class="mb-2 text-capitalize">{kind}</h6>
@@ -150,9 +160,7 @@
       <button type="button" class="btn btn-sm btn-outline-light" onclick={closeFullscreen}>Close</button>
     </div>
     <div class="json-fullscreen-body">
-      <div class="json-viewer-wrap json-viewer-wrap-fullscreen">
-        <JsonView json={parsedData} depth={2} />
-      </div>
+      <div class="json-viewer-wrap json-viewer-wrap-fullscreen" use:lunaViewer={parsedData}></div>
     </div>
   </div>
 {/if}
