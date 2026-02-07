@@ -1,0 +1,816 @@
+openapi: 3.0.0
+info:
+  title: Strum Machine API
+  version: 0.1.0
+  description: |
+    API for Strum Machine users to create, update, and delete songs programmatically.
+servers:
+  - url: https://beta.strummachine.com/api/v0
+    description: Private beta of Strum Machine API
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API_KEY
+
+  schemas:
+    Song:
+      type: object
+      example:
+        id: 'k8xGR4Bvx87KBt75x'
+        url: 'https://strummachine.com/app/songs/k8xGR4Bvx87KBt75x'
+        name: 'Beaumont Rag'
+        key: 'D'
+        tpm: 200
+        # prettier-ignore
+        sections:
+          - repetitions: 1
+            name: "A Part"
+            cells: ["A7", "A7", "A7", "A7", "D", "D", "D", "D", "A7", "A7", "A7", "A7", "D", "D", "D", "D", "A7", "A7", "A7", "A7", "D", "D", "D7", "D7", "G", "G", "D", "B7", "E7", "A7", "D", "D"]
+          - repetitions: 1
+            name: "B Part"
+            cells: ["A7", "A7", "A7", "A7", "D", "D", "D", "D", "A7", "A7", "A7", "A7", {"chord": "D", "effect": "stop"}, {"chord": "D", "effect": "rest"}, {"chord": "D", "effect": "rest"}, {"chord": "D", "effect": "rest"}, "A7", "A7", "A7", "A7", "D", "D", "D", "D", "G", "G", "D", "B7", "E7", "A7", "D", "D"]
+        createdAt: '2016-05-06T18:34:21.615Z'
+        updatedAt: '2024-02-21T19:05:15.908Z'
+      required:
+        - name
+        - key
+        - sections
+      properties:
+        id:
+          type: string
+          description: Unique song ID
+          readOnly: true
+          example: 'k8xGR4Bvx87KBt75x'
+        url:
+          type: string
+          format: uri
+          readOnly: true
+          example: 'https://strummachine.com/app/songs/k8xGR4Bvx87KBt75x'
+        name:
+          type: string
+          description: Song title
+          example: 'Beaumont Rag'
+        owner:
+          type: object
+          readOnly: true
+          description: Owner of the song (if associated with a user)
+          properties:
+            id:
+              type: string
+            firstName:
+              type: string
+            lastName:
+              type: string
+        key:
+          type: string
+          description: "Key of the song (e.g., 'C', 'Gm', 'F#'). Must match /^[A-G][b#]?m?$/"
+          pattern: '^[A-G][b#]?m?$'
+          example: 'D'
+        tpm:
+          type: number
+          description: Tempo in ticks per minute
+          minimum: 30
+          maximum: 600
+          default: 180
+          example: 200
+        timeSignature:
+          type: string
+          description: Time signature of the song
+          enum: ['4/4', '3/4', '6/8', '9/8']
+          default: '4/4'
+          example: '4/4'
+        displayTimeSignature:
+          type: string
+          description: Time signature to display (disambiguates between 2/2 and 4/4; empty string is "standard time")
+          enum: ['4/4', '2/2', '3/4', '6/8', '9/8', '']
+        notes:
+          type: string
+          description: Publicly-viewable notes under "About"
+          maxLength: 140
+        sections:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/Section'
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+          example: '2016-05-06T18:34:21.615Z'
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+          example: '2024-02-21T19:05:15.908Z'
+
+    Section:
+      type: object
+      required:
+        - cells
+      properties:
+        name:
+          type: string
+          description: "Section name (e.g., 'Intro', 'Verse')"
+          example: 'A Part'
+        type:
+          type: string
+          enum: ['i', 'o', 'sf', 'sl']
+          description: 'Section type: i=intro, o=outro, sf=segno/fine, sl=unknown'
+        repetitions:
+          type: number
+          minimum: 1
+          maximum: 99
+          default: 1
+          example: 1
+        lineLengths:
+          type: array
+          description: Optional array of numbers specifying the number of bars/measures per line
+          items:
+            type: integer
+        cells:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/Cell'
+
+    Cell:
+      oneOf:
+        - type: string
+          description: |
+            Chord symbol in the format: `[A-G][#b]?<type>` or `[A-G][#b]?<type>/[A-G][#b]?` for slash chords.
+
+            **Allowed chord types:**
+            - *(blank)*: major
+            - `m`: minor
+            - `7`: dominant 7th
+            - `^`: major 7th
+            - `m7`: minor 7th
+            - `6`: major 6
+            - `m6`: minor 6
+            - `9`: dominant 9th
+            - `m9`: minor 9th
+            - `^9`: major 9th
+            - `11`: dominant 11th
+            - `m11`: minor 11th
+            - `13`: dominant 13th
+            - `^13`: major 13th
+            - `69`: major 6/9
+            - `m69`: minor 6/9
+            - `mb6`: minor flat 6
+            - `7s`: dominant 7th sus4
+            - `9s`: dominant 9th sus4
+            - `13s`: dominant 13th sus4
+            - `m^`: minor major 7th
+            - `m^9`: minor major 9th
+            - `0`: minor 7th flat 5 (half-diminished)
+            - `o`: diminished 7th
+            - `o^`: diminished major 7th
+            - `o9`: diminished 9th
+            - `+`: augmented
+            - `+7`: augmented 7th
+            - `2`: suspended 2nd
+            - `4`: suspended 4th
+            - `5`: fifth (power chord)
+            - `7b5`: dominant 7th flat 5th
+            - `7#5`: dominant 7th sharp 5th
+            - `7b9`: dominant 7th flat 9th
+            - `7#9`: dominant 7th sharp 9th
+            - `7#11`: dominant 7th sharp 11th
+            - `7b13`: dominant 7th flat 13th
+
+            **Examples:** `C`, `G7`, `Bbm`, `D#o`, `D/F#`, `Am7/G`
+          example: 'G7'
+        - type: object
+          required:
+            - chord
+          example:
+            chord: 'D'
+            effect: 'stop'
+          properties:
+            chord:
+              type: string
+              description: |
+                Chord symbol in the format: `[A-G][#b]?<type>` or `[A-G][#b]?<type>/[A-G][#b]?` for slash chords.
+                See the string variant of Cell for the full list of allowed chord types.
+              example: 'D'
+            effect:
+              type: string
+              enum: ['rest', 'stop', 'diamond']
+              example: 'stop'
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+
+    List:
+      type: object
+      required:
+        - name
+      properties:
+        id:
+          type: string
+          description: Unique list ID
+          readOnly: true
+          example: 'abc123def456'
+        url:
+          type: string
+          format: uri
+          readOnly: true
+          example: 'https://strummachine.com/app/lists/abc123def456'
+        name:
+          type: string
+          description: List name
+          example: 'My Favorites'
+        owner:
+          type: object
+          readOnly: true
+          description: Owner of the list
+          properties:
+            id:
+              type: string
+            firstName:
+              type: string
+            lastName:
+              type: string
+        songs:
+          type: array
+          readOnly: true
+          items:
+            $ref: '#/components/schemas/ListSong'
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+          example: '2024-01-15T10:30:00.000Z'
+
+    ListSong:
+      type: object
+      properties:
+        id:
+          type: string
+          example: 'k8xGR4Bvx87KBt75x'
+        name:
+          type: string
+          example: 'Beaumont Rag'
+        owner:
+          type: object
+          properties:
+            id:
+              type: string
+            firstName:
+              type: string
+            lastName:
+              type: string
+        medleySongs:
+          type: array
+          description: Present only for medleys
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+        updatedAt:
+          type: string
+          format: date-time
+
+    ListSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          example: 'abc123def456'
+        name:
+          type: string
+          example: 'My Favorites'
+        owner:
+          type: object
+          properties:
+            id:
+              type: string
+            firstName:
+              type: string
+            lastName:
+              type: string
+        songCount:
+          type: integer
+          example: 12
+        createdAt:
+          type: string
+          format: date-time
+          example: '2024-01-15T10:30:00.000Z'
+
+security:
+  - bearerAuth: []
+
+paths:
+  /songs:
+    get:
+      tags: ['Songs']
+      summary: List songs
+      description: List songs in the authenticated user's account.
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 100
+            maximum: 10000
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            default: 0
+        - in: query
+          name: sort
+          schema:
+            type: string
+            enum: ['updatedAt', 'createdAt', 'name', 'id']
+            default: 'createdAt'
+        - in: query
+          name: search
+          schema:
+            type: string
+            description: Filter by song name
+      responses:
+        '200':
+          description: A list of songs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          example: 'oLMsmJvZXMQTHjtcS'
+                        name:
+                          type: string
+                          example: "Thinking of Home [Luke's version]"
+                        key:
+                          type: string
+                          example: 'G'
+                        updatedAt:
+                          type: string
+                          format: date-time
+                          example: '2024-02-21T19:28:23.696Z'
+                  pagination:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+                        example: 42
+                      limit:
+                        type: integer
+                        example: 100
+                      offset:
+                        type: integer
+                        example: 0
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    post:
+      tags: ['Songs']
+      summary: Create a new song
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Song'
+            examples:
+              Complex:
+                summary: 'Beaumont Rag (Full Example)'
+                value:
+                  name: 'Beaumont Rag'
+                  key: 'D'
+                  tpm: 200
+                  # prettier-ignore
+                  sections:
+                    - repetitions: 1
+                      name: "A Part"
+                      cells: ["A7", "A7", "A7", "A7", "D", "D", "D", "D", "A7", "A7", "A7", "A7", "D", "D", "D", "D", "A7", "A7", "A7", "A7", "D", "D", "D7", "D7", "G", "G", "D", "B7", "E7", "A7", "D", "D"]
+                    - repetitions: 1
+                      name: "B Part"
+                      cells: ["A7", "A7", "A7", "A7", "D", "D", "D", "D", "A7", "A7", "A7", "A7", {"chord": "D", "effect": "stop"}, {"chord": "D", "effect": "rest"}, {"chord": "D", "effect": "rest"}, {"chord": "D", "effect": "rest"}, "A7", "A7", "A7", "A7", "D", "D", "D", "D", "G", "G", "D", "B7", "E7", "A7", "D", "D"]
+      responses:
+        '201':
+          description: Song created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Song'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /songs/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    get:
+      tags: ['Songs']
+      summary: Retrieve a song
+      responses:
+        '200':
+          description: Song details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Song'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Song not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    put:
+      tags: ['Songs']
+      summary: Update a song
+      description: Full replacement of the song data.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Song'
+            examples:
+              Complex:
+                summary: 'Beaumont Rag (Full Example)'
+                value:
+                  name: 'Beaumont Rag'
+                  key: 'D'
+                  # prettier-ignore
+                  sections:
+                    - repetitions: 1
+                      name: "A Part"
+                      cells: ["A7", "A7", "A7", "A7", "D", "D", "D", "D", "A7", "A7", "A7", "A7", "D", "D", "D", "D", "A7", "A7", "A7", "A7", "D", "D", "D7", "D7", "G", "G", "D", "B7", "E7", "A7", "D", "D"]
+                    - repetitions: 1
+                      name: "B Part"
+                      cells: ["A7", "A7", "A7", "A7", "D", "D", "D", "D", "A7", "A7", "A7", "A7", {"chord": "D", "effect": "stop"}, {"chord": "D", "effect": "rest"}, {"chord": "D", "effect": "rest"}, {"chord": "D", "effect": "rest"}, "A7", "A7", "A7", "A7", "D", "D", "D", "D", "G", "G", "D", "B7", "E7", "A7", "D", "D"]
+      responses:
+        '200':
+          description: Song updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Song'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Song not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    delete:
+      tags: ['Songs']
+      summary: Delete a song
+      responses:
+        '204':
+          description: Song deleted
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Song not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /lists:
+    get:
+      tags: ['Lists']
+      summary: List song lists
+      description: List song lists accessible to the authenticated user.
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 100
+            maximum: 1000
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: A list of song lists
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ListSummary'
+                  pagination:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+                        example: 5
+                      limit:
+                        type: integer
+                        example: 100
+                      offset:
+                        type: integer
+                        example: 0
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    post:
+      tags: ['Lists']
+      summary: Create a new list
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                name:
+                  type: string
+                  example: 'My Favorites'
+      responses:
+        '201':
+          description: List created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/List'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /lists/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    get:
+      tags: ['Lists']
+      summary: Retrieve a list
+      responses:
+        '200':
+          description: List details with songs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/List'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: List not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    put:
+      tags: ['Lists']
+      summary: Update a list
+      description: Update list properties (name). Only the list owner can update it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  example: 'Renamed List'
+      responses:
+        '200':
+          description: List updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/List'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden - not the list owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: List not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    delete:
+      tags: ['Lists']
+      summary: Delete a list
+      description: Only the list owner can delete it.
+      responses:
+        '204':
+          description: List deleted
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden - not the list owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: List not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /lists/{id}/songs:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    post:
+      tags: ['Lists']
+      summary: Add a song or medley to a list
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                songId:
+                  type: string
+                  description: ID of the song to add (provide either songId or medleyId)
+                medleyId:
+                  type: string
+                  description: ID of the medley to add (provide either songId or medleyId)
+      responses:
+        '201':
+          description: Song added to list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/List'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: List or song not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Song is already in the list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /lists/{id}/songs/{songId}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+        description: List ID
+      - in: path
+        name: songId
+        required: true
+        schema:
+          type: string
+        description: Song or medley ID to remove
+    delete:
+      tags: ['Lists']
+      summary: Remove a song or medley from a list
+      responses:
+        '204':
+          description: Song removed from list
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: List or song not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
