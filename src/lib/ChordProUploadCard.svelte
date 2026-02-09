@@ -1,8 +1,12 @@
 <script>
   import 'luna-object-viewer/luna-object-viewer.css'
-  import ChordSheetJS from 'chordsheetjs'
   import LunaObjectViewer from 'luna-object-viewer'
-  import { getFirstVerseAndChorusInOrderFromSections, expandToFourLines, convertChordSheetLinesToStrumSlots } from './chordpro-to-strum'
+  import { parseChordPro } from './chordpro-parse'
+  import {
+    getFirstVerseAndChorusInOrderFromSong,
+    expandToFourLines,
+    convertChordSheetLinesToStrumSlots,
+  } from './chordpro-to-strum'
 
   /** Svelte action: bind luna-object-viewer to a container and update when data changes. */
   function lunaViewer(node, data) {
@@ -23,53 +27,59 @@
   let error = $state(/** @type {string | null} */ (null))
   let fullscreen = $state(false)
   let noSection = $state(false)
+  let pastedText = $state('')
 
-  function handleFileChange(e) {
-    const file = e.target?.files?.[0]
-    if (!file) return
-
+  function parseChordProText(text, sourceName = 'Loaded content') {
     parsedData = null
     parsedJson = null
-    fileName = file.name
+    fileName = sourceName
     error = null
     noSection = false
     sectionsWithSlots = []
 
+    try {
+      const song = parseChordPro(text)
+      parsedData = song
+      parsedJson = JSON.stringify(song, null, 2)
+
+      const ordered = getFirstVerseAndChorusInOrderFromSong(song)
+
+      if (ordered.length === 0) {
+        noSection = true
+        sectionsWithSlots = []
+        return
+      }
+
+      sectionsWithSlots = ordered.map((p) => {
+        const lines = p.lines.filter((line) => line.hasRenderableItems())
+        return {
+          kind: p.type,
+          serialized: lines,
+          slots: convertChordSheetLinesToStrumSlots(expandToFourLines(lines)),
+        }
+      })
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Parse failed'
+    }
+  }
+
+  function handleFileChange(e) {
+    const file = e.target?.files?.[0]
+    if (!file) return
     const reader = new FileReader()
     reader.onload = () => {
-      try {
-        const text = /** @type {string} */ (reader.result)
-        const parser = new ChordSheetJS.ChordProParser()
-        const song = parser.parse(text)
-        const serializer = new ChordSheetJS.ChordSheetSerializer()
-        const fullSerialized = serializer.serialize(song)
-        parsedData = fullSerialized
-        parsedJson = JSON.stringify(fullSerialized, null, 2)
-
-        const sectionBlocks = (song.bodyParagraphs || [])
-          .filter((p) => p.type === 'verse' || p.type === 'chorus')
-          .map((p) => ({ kind: p.type, lines: p.lines.map((l) => serializer.serializeLine(l)) }))
-        const ordered = getFirstVerseAndChorusInOrderFromSections(sectionBlocks)
-
-        if (ordered.length === 0) {
-          noSection = true
-          sectionsWithSlots = []
-          return
-        }
-
-        sectionsWithSlots = ordered.map((s) => ({
-          kind: s.kind,
-          serialized: s.serialized,
-          slots: convertChordSheetLinesToStrumSlots(expandToFourLines(s.lines)),
-        }))
-      } catch (err) {
-        error = err instanceof Error ? err.message : 'Parse failed'
-      }
+      parseChordProText(/** @type {string} */ (reader.result), file.name)
     }
     reader.onerror = () => {
       error = 'Failed to read file'
     }
     reader.readAsText(file)
+  }
+
+  function handlePasteParse() {
+    const text = pastedText.trim()
+    if (!text) return
+    parseChordProText(text, 'Pasted content')
   }
 
   function copyJson() {
@@ -93,18 +103,39 @@
 </script>
 
 <div class="card shadow-sm">
-  <div class="card-header">Upload ChordPro</div>
+  <div class="card-header">ChordPro</div>
   <div class="card-body">
     <p class="text-body mb-3">
-      Upload a ChordPro file (<code>.cho</code>, <code>.chordpro</code>, or text). It will be parsed with
-      <a href="https://github.com/martijnversluis/ChordSheetJS" target="_blank" rel="noreferrer">ChordSheetJS</a> and shown as JSON.
+      Upload a ChordPro file (<code>.cho</code>, <code>.chordpro</code>, or text). 
     </p>
-    <input
-      type="file"
-      accept=".cho,.chordpro,.txt,text/plain"
-      class="form-control mb-2"
-      onchange={handleFileChange}
-    />
+    <div class="mb-3">
+      <label for="chordpro-paste" class="form-label">Paste ChordPro content</label>
+      <textarea
+        id="chordpro-paste"
+        class="form-control font-monospace"
+        rows="6"
+        placeholder="Paste your ChordPro text here..."
+        bind:value={pastedText}
+      ></textarea>
+      <button
+        type="button"
+        class="btn btn-primary mt-2"
+        disabled={!pastedText.trim()}
+        onclick={handlePasteParse}
+      >
+        Parse
+      </button>
+    </div>
+    <div class="mb-2">
+      <label for="chordpro-file" class="form-label">Or upload a file</label>
+      <input
+        id="chordpro-file"
+        type="file"
+        accept=".cho,.chordpro,.txt,text/plain"
+        class="form-control"
+        onchange={handleFileChange}
+      />
+    </div>
     {#if fileName && !parsedData && !error && !noSection}
       <p class="text-muted small mb-0">Parsing {fileName}…</p>
     {/if}

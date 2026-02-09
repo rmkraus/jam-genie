@@ -1,20 +1,20 @@
 /**
  * Convert ChordSheetJS-like parsed lines into Strum Machine "8 slots per lyric line"
  * (4/4 bluegrass: 4 lines per verse/chorus, each line => 8 eighth-note slots).
+ * Works with Line[] from song.bodyParagraphs (paragraph.lines).
+ *
+ * TODO:
+ * - Support 3/4 waltz time
+ * 
+ * Tests
+ * - ninety nine years and one dark day (hot rize) - simple 4/4 bluegrass
+ * - wallflow (bob dylan) - 3/4 waltz time
+ * - Wabash cannonball (johnny cash) - 4/4 late changes
+ * - mama dont allow - 4/4 simple bluegrass
  */
 
-export type ChordLyricsPair = {
-  type: 'chordLyricsPair'
-  chords: string
-  lyrics: string
-  annotation?: string
-  chord?: unknown
-}
-
-export type ParsedLine = {
-  type: 'line'
-  items: ChordLyricsPair[]
-}
+import { ChordLyricsPair, Line } from 'chordsheetjs'
+import type { Paragraph, Song } from 'chordsheetjs'
 
 export type SlotLine = {
   slots: string[]
@@ -41,23 +41,6 @@ function normalizeChord(s: string): string {
   return s.trim()
 }
 
-function extractChordsWithPositions(line: ParsedLine): {
-  lyricText: string
-  chords: Array<{ chord: string; pos: number }>
-} {
-  let lyricSoFar = ''
-  const chords: Array<{ chord: string; pos: number }> = []
-
-  for (const it of line.items) {
-    const chordText = it.chords
-    if (!isBlankChord(chordText)) {
-      chords.push({ chord: normalizeChord(chordText), pos: lyricSoFar.length })
-    }
-    lyricSoFar += it.lyrics ?? ''
-  }
-
-  return { lyricText: lyricSoFar, chords }
-}
 
 /**
  * If the line begins with lyrics and the first chord appears "late",
@@ -82,7 +65,7 @@ function maybePrependPrevChord(
 }
 
 /** Chord events with item index for split decisions. */
-function extractChordEvents(line: ParsedLine): {
+function extractChordEvents(line: Line): {
   lyricText: string
   events: Array<{ chord: string; pos: number; itemIndex: number }>
 } {
@@ -91,6 +74,7 @@ function extractChordEvents(line: ParsedLine): {
 
   for (let i = 0; i < line.items.length; i++) {
     const it = line.items[i]
+    if (!(it instanceof ChordLyricsPair)) continue
     if (!isBlankChord(it.chords)) {
       events.push({ chord: normalizeChord(it.chords), pos: lyricSoFar.length, itemIndex: i })
     }
@@ -101,55 +85,39 @@ function extractChordEvents(line: ParsedLine): {
 }
 
 /**
- * Find a chord boundary near the middle to split this line into two musical lines.
- * Prefer (1 chord) + (2 chords). Only consider splitting when there are >= 3 chords.
+ * Find a chord boundary near the middle of the line to split into two musical lines.
+ * Only consider splitting when there are >= 3 chords.
  */
-function findSplitIndex(line: ParsedLine): number | null {
+function findSplitIndex(line: Line): number | null {
   const { lyricText, events } = extractChordEvents(line)
   const n = events.length
   if (n < 3) return null
 
   const mid = lyricText.length / 2
-  let best: { k: number; score: number } | null = null
+  let bestK = 0
+  let bestDist = Math.abs(events[1].pos - mid)
 
-  for (let k = 0; k < n - 1; k++) {
-    const splitPos = events[k + 1].pos
-    const distToMid = Math.abs(splitPos - mid)
-    const leftCount = k + 1
-    const rightCount = n - (k + 1)
-
-    let score = distToMid
-    if (leftCount === 1 && rightCount === 2) score -= 1000
-    if (leftCount === 1) score -= 200
-    if (rightCount === 1) score -= 50
-    if (rightCount > 3) score += 300
-    if (splitPos < lyricText.length * 0.25 || splitPos > lyricText.length * 0.75) score += 200
-
-    if (!best || score < best.score) best = { k, score }
+  for (let k = 1; k < n - 1; k++) {
+    const dist = Math.abs(events[k + 1].pos - mid)
+    if (dist < bestDist) {
+      bestDist = dist
+      bestK = k
+    }
   }
 
-  if (!best) return null
-
-  const splitPos = events[best.k + 1].pos
-  const ratio = splitPos / Math.max(1, lyricText.length)
-  const leftCount = best.k + 1
-  const rightCount = n - (best.k + 1)
-  const isPreferredPattern = leftCount === 1 && rightCount === 2
-  if (!isPreferredPattern && (ratio < 0.25 || ratio > 0.75)) return null
-
-  return events[best.k + 1].itemIndex
+  return events[bestK + 1].itemIndex
 }
 
 /** Split one line into two at a chord boundary when >= 3 chords and a good split exists. */
-export function splitLineIfNeeded(line: ParsedLine): ParsedLine[] {
+export function splitLineIfNeeded(line: Line): Line[] {
   const splitItemIndex = findSplitIndex(line)
   if (splitItemIndex == null) return [line]
 
   const leftItems = line.items.slice(0, splitItemIndex)
   const rightItems = line.items.slice(splitItemIndex)
   return [
-    { type: 'line', items: leftItems },
-    { type: 'line', items: rightItems },
+    new Line({ type: line.type, items: leftItems }),
+    new Line({ type: line.type, items: rightItems }),
   ]
 }
 
@@ -157,18 +125,22 @@ export function splitLineIfNeeded(line: ParsedLine): ParsedLine[] {
  * When there are only two lines in a verse/chorus, split each (if possible) so we get four lines
  * for Strum Machine's 4-line expectation.
  */
-export function expandToFourLines(lines: ParsedLine[]): ParsedLine[] {
+export function expandToFourLines(lines: Line[]): Line[] {
   if (lines.length !== 2) return lines
   return lines.flatMap(splitLineIfNeeded)
 }
 
+const PICKUP_THRESHOLD = 0.2
+
 function lineTo8Slots(
-  line: ParsedLine,
-  prevChord: string | null
+  line: Line,
+  prevChord: string | null,
+  hasLongPickup: boolean
 ): { slots: string[]; nextPrevChord: string | null; chords: string[]; lyricText: string } {
-  const { lyricText, chords } = extractChordsWithPositions(line)
-  const events = maybePrependPrevChord(chords, lyricText.length, prevChord)
-  const chordSyms = events.map((e) => e.chord)
+  const { lyricText, events } = extractChordEvents(line)
+  const chords = events.map((e) => ({ chord: e.chord, pos: e.pos }))
+  const withPrev = maybePrependPrevChord(chords, lyricText.length, prevChord)
+  const chordSyms = withPrev.map((e) => e.chord)
 
   if (chordSyms.length === 0) {
     if (!prevChord) {
@@ -185,7 +157,22 @@ function lineTo8Slots(
 
   if (chordSyms.length === 2) {
     const [a, b] = chordSyms
-    const slots = [...repeat(a, 4), ...repeat(b, 4)]
+    const totalLen = Math.max(1, lyricText.length)
+    // Two chords: decide whether the second chord comes in at 50% or at 25%/50%/75%.
+    // hasLongPickup is set from the first line of the paragraph (significant lyrics before the first chord).
+    // Long pickup → second chord at 50% (4+4). Otherwise weight by where the second chord starts and snap to 25/50/75.
+    if (hasLongPickup) {
+      const slots = [...repeat(a, 4), ...repeat(b, 4)]
+      return { slots, nextPrevChord: b, chords: chordSyms, lyricText }
+    }
+    const weightA = withPrev[1].pos / totalLen
+    const quarters = [0.25, 0.5, 0.75]
+    const nearest = quarters.reduce((best, q) =>
+      Math.abs(q - weightA) < Math.abs(best - weightA) ? q : best
+    )
+    const slotsA = Math.round(nearest * 8)
+    const slotsB = 8 - slotsA
+    const slots = [...repeat(a, slotsA), ...repeat(b, slotsB)]
     return { slots, nextPrevChord: b, chords: chordSyms, lyricText }
   }
 
@@ -193,13 +180,20 @@ function lineTo8Slots(
   return { slots: repeat(a, 8), nextPrevChord: a, chords: chordSyms, lyricText }
 }
 
-export function convertChordSheetLinesToStrumSlots(lines: ParsedLine[]): ConvertResult {
+export function convertChordSheetLinesToStrumSlots(lines: Line[]): ConvertResult {
   const outLines: SlotLine[] = []
   let prev: string | null = null
 
+  const firstLine = lines[0]
+  const firstEvents = firstLine ? extractChordEvents(firstLine) : null
+  const hasLongPickup =
+    firstEvents != null &&
+    firstEvents.events.length >= 2 &&
+    firstEvents.lyricText.length > 0 &&
+    firstEvents.events[0].pos / Math.max(1, firstEvents.lyricText.length) > PICKUP_THRESHOLD
+
   for (const ln of lines) {
-    if (ln.type !== 'line') continue
-    const { slots, nextPrevChord, chords, lyricText } = lineTo8Slots(ln, prev)
+    const { slots, nextPrevChord, chords, lyricText } = lineTo8Slots(ln, prev, hasLongPickup)
     outLines.push({ slots, chords, lyricText })
     prev = nextPrevChord
   }
@@ -207,183 +201,14 @@ export function convertChordSheetLinesToStrumSlots(lines: ParsedLine[]): Convert
   return { lines: outLines, flat: outLines.flatMap((l) => l.slots) }
 }
 
-/** Serialized ChordSheetJS song body: array of line objects (some with tag items). */
-type SerializedBodyLine = {
-  type: string
-  items?: Array<{ type: string; name?: string; value?: string; [key: string]: unknown }>
-}
-
-function isTagLine(line: SerializedBodyLine, tagName: string): boolean {
-  if (line.type !== 'line' || !Array.isArray(line.items) || line.items.length !== 1) return false
-  const item = line.items[0]
-  return item?.type === 'tag' && item?.name === tagName
-}
-
-function isLyricLine(line: SerializedBodyLine): line is { type: 'line'; items: ChordLyricsPair[] } {
-  if (line.type !== 'line' || !Array.isArray(line.items)) return false
-  return line.items.length > 0 && line.items.every((it) => it?.type === 'chordLyricsPair')
-}
-
 /**
- * Extract chorus lines from ChordSheetJS serialized song (between start_of_chorus and end_of_chorus).
- * Serializer returns { type, lines } (not body). Returns only the lyric lines (no tag lines).
+ * First verse and first chorus in file order. Loops through song.bodyParagraphs, returns Paragraph[].
  */
-export function extractChorusLines(serializedSong: { lines?: SerializedBodyLine[]; body?: SerializedBodyLine[] }): {
-  chorusLines: ParsedLine[]
-  chorusOnly: SerializedBodyLine[]
-} {
-  const body = serializedSong?.lines ?? serializedSong?.body ?? []
-  const chorusOnly: SerializedBodyLine[] = []
-  const chorusLines: ParsedLine[] = []
-  let inChorus = false
-
-  for (const line of body) {
-    if (isTagLine(line, 'start_of_chorus')) {
-      inChorus = true
-      continue
-    }
-    if (isTagLine(line, 'end_of_chorus')) {
-      inChorus = false
-      continue
-    }
-    if (!inChorus) continue
-    if (isLyricLine(line)) {
-      chorusOnly.push(line)
-      chorusLines.push(line)
-    }
-  }
-
-  return { chorusLines, chorusOnly }
-}
-
-/**
- * Extract first verse lines (between first start_of_verse and matching end_of_verse).
- * Returns only the lyric lines (no tag lines).
- */
-export function extractFirstVerseLines(serializedSong: { lines?: SerializedBodyLine[]; body?: SerializedBodyLine[] }): {
-  verseLines: ParsedLine[]
-  verseOnly: SerializedBodyLine[]
-} {
-  const body = serializedSong?.lines ?? serializedSong?.body ?? []
-  const verseOnly: SerializedBodyLine[] = []
-  const verseLines: ParsedLine[] = []
-  let inVerse = false
-
-  for (const line of body) {
-    if (isTagLine(line, 'start_of_verse')) {
-      inVerse = true
-      continue
-    }
-    if (isTagLine(line, 'end_of_verse')) {
-      inVerse = false
-      continue
-    }
-    if (!inVerse) continue
-    if (isLyricLine(line)) {
-      verseOnly.push(line)
-      verseLines.push(line)
-    }
-  }
-
-  return { verseLines, verseOnly }
-}
-
-/** One section (verse or chorus) with its lyric lines and file order. */
-export type ExtractedSection = {
-  kind: 'verse' | 'chorus'
-  lines: ParsedLine[]
-  serialized: SerializedBodyLine[]
-  order: number
-}
-
-/**
- * Extract all verse and chorus sections in file order. Each section is the lyric lines
- * between start_of_verse/end_of_verse or start_of_chorus/end_of_chorus.
- */
-export function extractAllSections(serializedSong: { lines?: SerializedBodyLine[]; body?: SerializedBodyLine[] }): ExtractedSection[] {
-  const body = serializedSong?.lines ?? serializedSong?.body ?? []
-  const sections: ExtractedSection[] = []
-  let order = 0
-  let currentKind: 'verse' | 'chorus' | null = null
-  let currentLines: ParsedLine[] = []
-  let currentSerialized: SerializedBodyLine[] = []
-
-  function flush() {
-    if (currentKind !== null) {
-      sections.push({ kind: currentKind, lines: currentLines, serialized: currentSerialized, order: order++ })
-      currentKind = null
-      currentLines = []
-      currentSerialized = []
-    }
-  }
-
-  for (const line of body) {
-    if (isTagLine(line, 'start_of_verse')) {
-      flush()
-      currentKind = 'verse'
-      continue
-    }
-    if (isTagLine(line, 'end_of_verse')) {
-      if (currentKind === 'verse') flush()
-      continue
-    }
-    if (isTagLine(line, 'start_of_chorus')) {
-      flush()
-      currentKind = 'chorus'
-      continue
-    }
-    if (isTagLine(line, 'end_of_chorus')) {
-      if (currentKind === 'chorus') flush()
-      continue
-    }
-    if (currentKind !== null && isLyricLine(line)) {
-      currentLines.push(line)
-      currentSerialized.push(line)
-    }
-  }
-  flush()
-
-  return sections
-}
-
-/**
- * First verse with notes and first chorus with notes, in file order.
- * At least one must have notes; returns empty array if neither does.
- * Use this when you have a flat serialized song (lines with start_of_verse/end_of_verse tags).
- */
-export function getFirstVerseAndChorusInOrder(serializedSong: { lines?: SerializedBodyLine[]; body?: SerializedBodyLine[] }): ExtractedSection[] {
-  const sections = extractAllSections(serializedSong)
-  return pickFirstVerseAndChorusInOrder(sections)
-}
-
-/** Section block as from ChordPro: kind + array of (serialized) lines. */
-export type SectionBlock = {
-  kind: 'verse' | 'chorus'
-  lines: SerializedBodyLine[]
-}
-
-/**
- * Accept sections that already have "kind" and "lines" (e.g. from song.bodyParagraphs).
- * Filters each section's lines to lyric lines only, then returns first verse with notes
- * and first chorus with notes in file order.
- */
-export function getFirstVerseAndChorusInOrderFromSections(sectionBlocks: SectionBlock[]): ExtractedSection[] {
-  const sections: ExtractedSection[] = sectionBlocks.map((block, order) => {
-    const lyricLines = block.lines.filter((line): line is SerializedBodyLine & { items: ChordLyricsPair[] } => isLyricLine(line))
-    return {
-      kind: block.kind,
-      lines: lyricLines as ParsedLine[],
-      serialized: lyricLines,
-      order,
-    }
-  })
-  return pickFirstVerseAndChorusInOrder(sections)
-}
-
-function pickFirstVerseAndChorusInOrder(sections: ExtractedSection[]): ExtractedSection[] {
-  const firstVerse = sections.find((s) => s.kind === 'verse' && s.lines.length > 0)
-  const firstChorus = sections.find((s) => s.kind === 'chorus' && s.lines.length > 0)
-  const chosen = [firstVerse, firstChorus].filter((s): s is ExtractedSection => s != null)
+export function getFirstVerseAndChorusInOrderFromSong(song: Song): Paragraph[] {
+  const verse = song.bodyParagraphs.find((p) => p.type?.toLowerCase() === 'verse' && p.hasRenderableItems())
+  const chorus = song.bodyParagraphs.find((p) => p.type?.toLowerCase() === 'chorus' && p.hasRenderableItems())
+  const chosen = [verse, chorus].filter((p): p is Paragraph => p != null)
   if (chosen.length === 0) return []
-  return chosen.sort((a, b) => a.order - b.order)
+  return chosen.sort((a, b) => song.bodyParagraphs.indexOf(a) - song.bodyParagraphs.indexOf(b))
 }
+
